@@ -1,0 +1,28 @@
+include "zxspectrum_be/stdint.berc"
+include "zxspectrum_be/sp1.berc"
+
+// These are generated.
+//
+include "sp1gameframework_enums.inc"
+include "sp1gameframework_structs.inc"
+include "sp1gameframework_statics.inc"
+
+def GAMELOOP_TRACE_TABLE
+{
+  GAMELOOP_TRACE_ENTRIES GAMELOOP_TRACE open "gameloop trace table"
+}
+
+
+def main struct
+{
+  at _version buf 8 asc "version"
+
+  at 0 NullDef suppress ""
+  at 0 NullDef suppress "*******************"
+  at 0 NullDef suppress "** Trace tables: **"
+  at 0 NullDef suppress "*******************"
+  at 0 NullDef suppress ""
+
+  at _gameloop_tracetable
+  n16 ptr GAMELOOP_TRACE_TABLE    null "gameloop"
+}
