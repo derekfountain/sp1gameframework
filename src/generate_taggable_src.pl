@@ -18,17 +18,81 @@ use strict;
 # along with this program; if not, write to the Free Software
 # Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301, USA.
 
+# This script creates a "taggable source" file which can be loaded into my
+# modified version of Fuse. See https://spectrumcomputing.co.uk/forums/viewtopic.php?t=974
+#
+# The idea is to load the symbols of the generated executable and note the
+# address in the Spectrum memory each one appears at. Then load and merge
+# all the *.c.lis files produced by the compiler. Those *.c.lis files
+# contain the assembly language generated to implement the C code, and
+# each instruction is labelled with a numeric offset from the start of
+# the list file. So the idea is to pick out each symbol as the parse
+# of the list file comes across it, note the location in memory that
+# symbol is at, then continue down the list file adding the offset of each
+# instruction to the symbol's definition.
+#
+# Example:
+#
+#   722                          ; Function main
+#   723                          ; ---------------------------------
+#   724   000000 _main:
+#   725                          ;main.c:39: if( is_rom_writable() )
+#   726   000000 cd0000          	call	_is_rom_writable
+#   727   000003 7d              	ld	a, l
+#   728   000004 b7              	or	a, a
+#   729   000005 2800            	jr	Z,l_main_00102
+#
+# I come across the _main: symbol and note it's at offset 000000 in this
+# list file (line 724). I find its location in the symbols table - let's say
+# it lands at 32768. The first subsequent instruction is a "call", and its
+# offset is 000000 from the start of this file (line 726). So that call is
+# at 000000-000000+32768, which is 32768.
+#
+# The next instruction is the "ld a,l" at offset 000003, so 000003-000000
+# is 3, 32768+3 is 32771, so that instruction is at 32771. And so on.
+#
+# When a new symbol is found:
+#
+#
+#   685                          ; Function setup_int
+#   686                          ; ---------------------------------
+#   687   00000d _setup_int:
+#   688                          ;int.c:43: memset( TABLE_ADDR, JUMP_POINT_HIGH_BYTE, 257 );
+#   689   00000d 2100d0          	ld	hl,0xd000
+#
+# I find the _setup_int: symbol. Let's say it lands at 40000. The next
+# instruction is at offset 00000d, which places it at 40013.
+#
+# The output from this script is in the form:
+#
+# 0x8000 ++ <rest of line in list file>
+#
+# This loads into Fuse, which tags the line with the address value it
+# contains - 0x8000 in this case. When the PC reaches 8000 that value
+# is searched in the text as tag, and the text viewer is scrolled to 
+# that location.
+#
+# Some locations will have several tags all the same:
+#
+#   724   008000 _main:
+#   725                          ;main.c:39: if( is_rom_writable() )
+#   726   008000 cd0000          	call	_is_rom_writable
+#
+# In this case the viewer would scroll to the /last/ line with that address
+# entry which is the opposite of what's required. So the output is set to
+# only write a single address once in the tagged output:
+#
+# 0x8000 ++ <rest of line in list file>
+# 0x     ++ <rest of next line in list file>
+
+#
+#
+#
 
 # Load in the symbols table. The real symbols table has all the information
 # but for now my previously created symbols file containing name=value pairs
 # is easiest to parse.
 #
-print STDERR "\n\n\nGENERATE_TAGGABLE_SRC IS BROKEN\n\n\n";
-exit 0;
-
-
-
-
 my %symbols = ();
 
 my $symbols_filename = shift( @ARGV );
@@ -42,21 +106,16 @@ while( my $line = <SYM_FILE_HANDLE> ) {
 close( SYM_FILE_HANDLE );
 
 
-# Find the function names. They're in the list files marked with lines like:
-#
-#  748   0000              ; Function gameloop_add_trace
-#  749   0000              ; ---------------------------------
-#  750   0000              _gameloop_add_trace:
-#
+my %addresses_written=();
 
 foreach my $lis_filename (@ARGV) {
 
   open( LIS_FILE_HANDLE, $lis_filename ) or die("No such input file \"$lis_filename\"\n");
 
   my $in_function = undef;
-  my $lis_file_offset = 0;
-  my $offset_at_last_symbol = 0;
-  my $last_symbol_address = 0;
+  my $lis_file_offset = "0000";
+  my $offset_at_last_symbol = "0000";
+  my $last_symbol_address = "0000";
   my $rest_of_line;
 
   my $skip_block = 0;
@@ -81,27 +140,38 @@ foreach my $lis_filename (@ARGV) {
 
       if( ! $skip_block ) {
 
-	# The important lines are formatted, for example:
+	# Most lines start with, for example:
 	#
-	#   674   _full_screen:
+	#    726   000000 cd0000          	call	_is_rom_writable
 	#
 	# The first value is a line number in the *.lis file. The second
-	# value is a hex number which indicates the hex offset in the
-	# memory map of the instruction or data at the line. The third
-	# value is the unlinked machine code value.
+	# value is a hex number which indicates the hex offset from the
+	# start of the list file. Then there's the machine code values.
+	# The rest of the line is the assembler.
 	#
-	if( $line =~ /^(\d+)\s+(\w+)(.*)$/ ) {
+	# Function declaration lines are:
+	#
+	#    724   000000 _main:
+	#
+	# So the same, only there's nothing in the rest-of-line
+	#
+	if( $line =~ /^\s*(\d+)\s\s\s(\w+)(\s+.*)$/ ) {
 	  my $lis_file_line_number = $1;
+
+	  # Note the offset of this line from the start of the list file
+	  #
 	  $lis_file_offset = $2;
+
 	  $rest_of_line = $3;
 
-	  # If the thing after the offset value is formatted:
+	  # We found a line of interest, work out if it's a new function
+	  # defintition.
 	  #
-	  #  _zxy:
+	  #    724   000000 _main:
 	  #
-	  # then assume it's a symbol. It should be in the symbols table.
+	  # If so, it will be in the symbols file.
 	  #
-	  if( $line =~ /^\d+\s+\w+\s+(_\w+):\s*$/ ) {
+	  if( $line =~ /^\s*\d+\s+\w+\s+(_\w+):\s*$/ ) {
 	    my $symbol = $1;
 	    
 	    if( exists( $symbols{$symbol} ) ) {
@@ -109,6 +179,10 @@ foreach my $lis_filename (@ARGV) {
 	      $last_symbol_address = $symbols{$symbol};
 	      $offset_at_last_symbol = $lis_file_offset;
 	    
+	      # At this point I know the location in Spectrum memory of that
+	      # symbol, and the location of the symbol's code from the start
+	      # of the list file.
+
 #	      print "++++ ".$symbols{$symbol}." -- ".$symbol."\n";
 	    }
 	    else {
@@ -119,8 +193,24 @@ foreach my $lis_filename (@ARGV) {
       }
     }
 
+    # So for each line I can subtract the line's location in the list file
+    # from the location in the list of the last symbol - the function we're
+    # parsing though. That gives the offset is bytes of the current line's
+    # instruction from the start of the defintion of the function the symbol
+    # refers to. Add that offset to where the function is in Spectrum memory
+    # to find the address of the current line's m/c code in the Spectrum
+    # memory.
+    #
     my $address = hex($lis_file_offset) - hex($offset_at_last_symbol) + hex($last_symbol_address);
-    printf("0x%04X ++ %s\n", $address, $rest_of_line);
+    if( !exists( $addresses_written{$address} ) )
+    {
+      printf("0x%04X ++ %s\n", $address, $rest_of_line);
+      $addresses_written{$address} = 1;
+    }
+    else
+    {
+      printf("0x     ++ %s\n", $rest_of_line);
+    }
  
   }
 

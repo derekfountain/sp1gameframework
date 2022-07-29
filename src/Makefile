@@ -39,6 +39,7 @@ CPP_FLAGS=$(TARGET) $(VERBOSITY) -c -compiler sdcc -clib=sdcc_iy -pragma-include
 SYMBOLS_GENERATOR=./generate_symbols.pl
 MAP=$(PROJECT).map
 
+LIST_FILE_CONVERTER=./list_file_conv.pl
 TAGGABLE_SRC_GENERATOR=./generate_taggable_src.pl
 TAGGABLE_SRC=$(PROJECT).taggable_src
 
@@ -111,7 +112,8 @@ $(SYM_OUTPUT): $(EXEC)
 
 # Tagged source needs symbol table
 $(TAGGABLE_SRC): $(SYM_OUTPUT)
-	$(TAGGABLE_SRC_GENERATOR) $(SYM_OUTPUT) *.c.lis > $(TAGGABLE_SRC)
+	$(LIST_FILE_CONVERTER) *.c.lis
+	$(TAGGABLE_SRC_GENERATOR) $(SYM_OUTPUT) *.c.lis.conv > $(TAGGABLE_SRC)
 
 # BE enums extractor runs after a successful build
 $(BE_ENUMS): $(EXEC)
@@ -140,5 +142,5 @@ clean_tmp:
 
 .PHONY: clean
 clean:
-	rm -f *.o *.cpre *.err *.bin *.tap *.map *.sym *.lis $(PROJECT)*.inc zcc_opt.def *~ $(BE_ENUMS) $(TAGGABLE_SRC) TAGS /tmp/tmpXX*
+	rm -f *.o *.cpre *.err *.bin *.tap *.map *.sym *.lis *.conv $(PROJECT)*.inc zcc_opt.def *~ $(BE_ENUMS) $(TAGGABLE_SRC) TAGS /tmp/tmpXX*
 	rm -rf __pycache__
