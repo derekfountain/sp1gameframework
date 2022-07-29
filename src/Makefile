@@ -142,5 +142,6 @@ clean_tmp:
 
 .PHONY: clean
 clean:
-	rm -f *.o *.cpre *.err *.bin *.tap *.map *.sym *.lis *.conv $(PROJECT)*.inc zcc_opt.def *~ $(BE_ENUMS) $(TAGGABLE_SRC) TAGS /tmp/tmpXX*
+	rm -f *.o *.cpre *.err *.bin *.tap *.map *.sym *.lis *.conv $(PROJECT) \
+	      $(PROJECT)*.inc zcc_opt.def *~ $(BE_ENUMS) $(TAGGABLE_SRC) TAGS /tmp/tmpXX*
 	rm -rf __pycache__
